@@ -1,0 +1,2 @@
+The idea is for this to be a separate git repository
+for the jupyter notebook analyses to borrow objects and functions from. 

@@ -1,0 +1,13 @@
+*~
+*.egg-info
+*.pyc
+*.hdf5
+*.pkl
+*.mp4
+*.npz
+*.pkl
+*.png
+*.html
+.ipynb_checkpoints*
+.__pychache__
+*.json
