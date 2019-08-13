@@ -191,6 +191,30 @@ class ExpandingSinusoidTrace(GeneralTrace):
         #Then store a version of this array where the bottom is 0 and angles are degrees
         self.path_origin_shifted_degrees = (self.path - theta_0)*(180/np.pi)
 
+class LinearExpandingSinusoidTrace(GeneralTrace):
+    def __init__(self,theta_0,a,omega,t0,m1,m2,n_points=9000,
+        t_start=0,t_stop=3,num_transit_ticks=40,y0=0):
+        #a: scale
+        #t0: t value at which slope of expansion changes
+        #m1: first slope of expansion
+        #m2: second slope of expansion
+        #omega: frequency
+        #y0: nonzero start amplitude
+
+
+        #setup all inherited properties
+        super().__init__(n_points=n_points,t_start=t_start,t_stop=t_stop,num_transit_ticks=num_transit_ticks)
+
+        #plus:
+        envelope = y0 + m1*self.t
+        envelope[self.t>t0] = m2*(self.t[self.t>t0]-t0) +m1*t0+y0
+        envelope = a*envelope
+        #Want this to still work when there are multiple rows (trials) of traces
+        self.path = (np.pi/16)*np.sin((2*np.pi*omega)*self.t)*envelope+self.theta_0
+        #Then store a version of this array where the bottom is 0 and angles are degrees
+        self.path_origin_shifted_degrees = (self.path - theta_0)*(180/np.pi)
+
+
 class TwoFreqSinusoidTrace(GeneralTrace):
 
     def __init__(self,theta_0,a,b,n,omega,n_points=9000,
