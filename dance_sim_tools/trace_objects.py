@@ -1,15 +1,17 @@
 import numpy as np
 import scipy
 from scipy import signal
+from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
+import sys
 
 class GeneralTrace(object):
-    def __init__(self,n_points=9000,t_start=0,t_stop=3,num_transit_ticks=40):
-        self.t = np.linspace(t_start,t_stop,n_points)
+    def __init__(self,n_points=9000,num_transit_ticks=40,t_stop=3.):
+        self.t = np.linspace(0.,t_stop,n_points)
         self.dt = self.t[1]-self.t[0]
         self.angle_bin_size_rad = 2*np.pi/num_transit_ticks
         self.angle_bin_size_deg = np.degrees(2*np.pi/num_transit_ticks)
-        self.location_bins_rads = np.arange(0,2*np.pi,self.angle_bin_size_rad)
+        self.location_bins_rads = np.arange(-np.pi,np.pi,self.angle_bin_size_rad)
         self.location_bins_degs = np.arange(-180,180,np.degrees(self.angle_bin_size_deg))
         #currently this doesn't include 2pi as the n+1 bin edge
     def find_reversal_inds(self):
@@ -22,9 +24,30 @@ class GeneralTrace(object):
         #Want this to still work when there are multiple rows (trials) of traces
 
         #second version: find every time the derivative changes sign
+        reversals_inds = np.where(np.diff(np.signbit(np.diff(self.path))))
 
-        deriv_zero_crossings = np.where(np.diff(np.signbit(np.diff(self.path))))
-        return deriv_zero_crossings
+        reversal_thetas = self.path[reversals_inds]
+
+        bins_rads = self.location_bins_rads
+        reversal_bin_counts,bins = np.histogram(reversal_thetas,bins=bins_rads)
+        reversal_bin_counts[np.isnan(reversal_bin_counts)] = 0.
+
+        return reversals_inds,reversal_bin_counts
+
+    def find_reversals_peaks(self,order=71,dis=30,wid=200):
+        th_filter = scipy.signal.savgol_filter(np.unwrap(self.path),1*order,1)
+        peaks_p, properties = find_peaks(th_filter, height=None, threshold=None, distance=dis*1, width = wid)
+        peaks_n, properties = find_peaks(-th_filter, height=None, threshold=None, distance=dis*1, width = wid)
+        peaks_inds = np.hstack((peaks_p,peaks_n))
+
+        reversal_thetas = self.path[peaks_inds]
+
+        bins_rads = self.location_bins_rads
+        reversal_counts,bins = np.histogram(reversal_thetas,bins=bins_rads)
+        reversal_counts[np.isnan(reversal_counts)] = 0.
+
+        return peaks_inds,reversal_counts
+
 
     def reversal_loc_hist(self,shifted=False):
 
@@ -175,13 +198,23 @@ class GeneralTrace(object):
 
 
 
+
+# class EmpiricalTrace(object):
+#     def __init__(self,t_start=0,t_stop=3,num_transit_ticks=24,):
+#         self.t = np.linspace(t_start,t_stop,n_points)
+#         self.dt = self.t[1]-self.t[0]
+#         self.angle_bin_size_rad = 2*np.pi/num_transit_ticks
+#
+
+
+
 class ExpandingSinusoidTrace(GeneralTrace):
 
     def __init__(self,theta_0,a,omega,n_points=9000,
-        t_start=0,t_stop=3,num_transit_ticks=40):
+        num_transit_ticks=40):
 
         #setup all inherited properties
-        super().__init__(n_points=n_points,t_start=t_start,t_stop=t_stop,num_transit_ticks=num_transit_ticks)
+        super().__init__(n_points=n_points,num_transit_ticks=num_transit_ticks)
 
         #plus:
         envelope = a*np.exp(self.t)
@@ -192,25 +225,29 @@ class ExpandingSinusoidTrace(GeneralTrace):
         self.path_origin_shifted_degrees = (self.path - theta_0)*(180/np.pi)
 
 class LinearExpandingSinusoidTrace(GeneralTrace):
-    def __init__(self,theta_0,a,omega,t0,m1,m2,n_points=9000,
-        t_start=0,t_stop=3,num_transit_ticks=40,y0=0):
-        #a: scale
+    def __init__(self,theta_0,T1,T2,f1,f2,n_points=9000,
+        num_transit_ticks=40,a11=0,a12=1):
         #t0: t value at which slope of expansion changes
         #m1: first slope of expansion
         #m2: second slope of expansion
         #omega: frequency
-        #y0: nonzero start amplitude
-
+        #a11: nonzero start amplitude
 
         #setup all inherited properties
-        super().__init__(n_points=n_points,t_start=t_start,t_stop=t_stop,num_transit_ticks=num_transit_ticks)
+        super().__init__(n_points=n_points,num_transit_ticks=num_transit_ticks)
 
+        self.theta_0 = theta_0
         #plus:
-        envelope = y0 + m1*self.t
-        envelope[self.t>t0] = m2*(self.t[self.t>t0]-t0) +m1*t0+y0
-        envelope = a*envelope
+
+        m1 = (a12-a11)/T1
+        m2 = (np.pi-(a12))/(T2)
+        self.envelope = a11 + m1*self.t
+        self.envelope[self.t>T1] = m2*(self.t[self.t>T1]-T1) +m1*T1+a11
         #Want this to still work when there are multiple rows (trials) of traces
-        self.path = (np.pi/16)*np.sin((2*np.pi*omega)*self.t)*envelope+self.theta_0
+        freq_over_time = np.zeros_like(self.envelope)
+        freq_over_time[self.t<=T1] = f1
+        freq_over_time[self.t>T1] = f2
+        self.path = np.sin((np.pi*freq_over_time)*self.t)*self.envelope+self.theta_0
         #Then store a version of this array where the bottom is 0 and angles are degrees
         self.path_origin_shifted_degrees = (self.path - theta_0)*(180/np.pi)
 
@@ -218,20 +255,206 @@ class LinearExpandingSinusoidTrace(GeneralTrace):
 class TwoFreqSinusoidTrace(GeneralTrace):
 
     def __init__(self,theta_0,a,b,n,omega,n_points=9000,
-        t_start=0,t_stop=3,num_transit_ticks=40):
+        num_transit_ticks=40):
         #setup all inherited properties
-        super().__init__(n_points=n_points,t_start=t_start,t_stop=t_stop,num_transit_ticks=num_transit_ticks)
+        super().__init__(n_points=n_points,num_transit_ticks=num_transit_ticks)
         self.theta_0 = theta_0
         self.path = self.theta_0 + b*np.sin(n*(2*np.pi*omega)*self.t)+a*np.sin((2*np.pi*omega)*self.t)
         self.path_origin_shifted_degrees = (self.path - theta_0)*(180/np.pi)
+
 class SinPlusSquareWave(GeneralTrace):
 
     def __init__(self,theta_0,a,b,n,omega,n_points=9000,
-        t_start=0,t_stop=3,num_transit_ticks=40):
+        num_transit_ticks=40):
 
         #setup all inherited properties
-        super().__init__(n_points=n_points,t_start=t_start,t_stop=t_stop,num_transit_ticks=num_transit_ticks)
+        super().__init__(n_points=n_points,num_transit_ticks=num_transit_ticks)
 
         self.theta_0 = theta_0
         self.path = self.theta_0 + b*np.sin(n*(2*np.pi*omega)*self.t)+a*signal.square((2*np.pi*omega)*self.t)
         self.path_origin_shifted_degrees = (self.path - theta_0)*(180/np.pi)
+
+class DistanceListTrace(GeneralTrace):
+    #Like a GeneralTrace, except that is specifically given by a list of
+    #straight line inter-reversal distances, with a constant velocity.
+
+    def __init__(self,food1_loc,ird_values,r_0,velocity=3,n_points=9000,
+        num_transit_ticks=40,t_stop=3.):
+
+        #k_histogram is a
+
+        #setup all inherited properties
+        super().__init__(n_points=n_points,num_transit_ticks=num_transit_ticks,t_stop=t_stop)
+
+        self.velocity = velocity    ## mm/s
+        self.food1_loc = food1_loc
+        self.ird_list = ird_values
+        #print(ird_values)
+        self.straight_path_times = ird_values/self.velocity
+        #print(self.straight_path_times/ird_values)
+        #print(velocity)
+        #compute a cumsum to get reversal times
+        #switch above to mins
+        self.straight_path_times/=60.
+        self.reversal_times = np.cumsum(self.straight_path_times)
+
+
+        #also crop the ir distances this way
+        self.ird_list = self.ird_list[0:len(self.straight_path_times)-1]
+        self.ird_list = np.hstack((np.array(r_0),self.ird_list))
+        alternating_signs = np.ones_like(self.ird_list)
+        alternating_signs[0::2] = -1.
+        self.delta_theta_coarse = alternating_signs*self.ird_list
+        self.delta_theta_coarse = np.hstack((np.array([food1_loc]),self.delta_theta_coarse))
+        self.theta_coarse = np.cumsum(self.delta_theta_coarse)
+
+        t_interpolate = np.hstack((np.array([0]),self.reversal_times))
+
+        # plt.figure()
+        # plt.plot(t_interpolate,self.theta_coarse,'ro-')
+
+        self.path = np.interp(self.t,
+            t_interpolate, self.theta_coarse)
+
+        # plt.plot(self.t,self.path,'b')
+
+        # plt.xlim([0,max(self.t)])
+
+        # plt.show()
+
+        self.path_origin_shifted_degrees = (self.path)*(180/np.pi)
+
+
+        # plt.show()
+
+
+    #Draw list of inter-reversal distances from histogram
+
+    #Linear interpolation back and forth using these distances and slope given
+    #by the velocity (fixed)
+
+
+class Model4Trace(DistanceListTrace):
+
+    def __init__(self,food_case,s,r_0,k_std,eps_mean,eps_std,n_points=9000,
+        num_transit_ticks=40,velocity=np.radians(10)):
+        #r_0: excursion distance
+        #k: multiplicative constant
+        #g: draw from a distribution: (80,15,5)
+        #epsilon: characteristic search length
+        #d: food case-dependent distance
+
+
+        #Use case to define d
+        if food_case==1:
+            d = 0.
+
+        if food_case==2:
+            d = np.pi/3
+
+        if food_case==3:
+            d = np.pi/4
+
+        if food_case==4:
+            d = 2*np.pi/3
+
+        num_steps = 100
+
+        #Desired output: list of reversal locations (theta) in order
+
+        ks = np.random.normal(1.,k_std,size=num_steps)
+
+        f2 = s+d
+
+        self.d = d
+
+        #(0)
+        #Start at r_0 to the left of last food
+        #Move r_0 to the left (should be updated to be either left or right, equal probability)***************
+        current_loc = s + (d/2)+r_0/2
+        current_loc = s + r_0/2
+
+        reversal_locations = [current_loc]
+
+        for step in range(num_steps):
+    #        print('k:',ks[step])
+#            print('step:',step)
+#            print('theta:',np.degrees(current_loc))
+
+            if (current_loc>s)&(current_loc<s+d/2):
+#                print('a')
+                current_loc-= ks[step]*r_0
+            elif (current_loc<s)&(current_loc>s-d):
+#                print('b')
+                current_loc+= ks[step]*r_0
+            elif (current_loc>s+(d/2))&(current_loc<s+d):
+#                print('c')
+                current_loc+= ks[step]*r_0
+            elif (current_loc>s+d)&(current_loc<s+2*d):
+#                print('d')
+                current_loc-= ks[step]*r_0
+            else:
+                current_loc+=np.radians(np.random.uniform(-10,10))
+
+
+
+
+
+
+
+            #(2)
+            #Return to first food (set position to 0)
+            #(3)
+            #Draw k. Move right (or opposite of last step) k_1*r_0.
+
+
+
+#            current_loc+=r_0+ks[step]*r_0
+
+            #(4)
+            #Draw g according to [80,15,5] [1,0,-1]. (can be time-varying)
+            probs = np.array([.9,.08,.02])
+            #probs = np.array([0.,1.,0.])
+        #    probs = np.array([1.,0.,0.])
+            g = np.random.choice(np.array([1,0,-1]),p=probs)
+
+            epsilon = np.random.normal(eps_mean,eps_std)
+        #    print(g)
+    #        print(current_loc)
+            if g==1:
+                #g=1 then move d+episilon right (toward F2).
+                #print(current_loc)
+                #sys.exit()
+                if (current_loc>0)&(current_loc<d):
+                #    print('here1')
+                    current_loc += d+epsilon
+                elif current_loc>d:
+                #    print('here2')
+                    current_loc -= d+epsilon
+    #        print(current_loc)
+            #d = abs(F2) = abs(F1-F2)
+            #epsilon ~ N(eps_mean,eps_std)
+
+            #g=-1 move d+epsilon left
+            if g==-1:
+                if current_loc<=d:
+                    current_loc -= d+epsilon
+                if current_loc>d:
+                    current_loc += d+epsilon
+
+            #(5) Store r_1.
+
+            reversal_locations.append(current_loc)
+
+        self.reversal_thetas = np.array(reversal_locations)
+        inter_reversal_distances = np.abs(np.diff(self.reversal_thetas))
+
+
+
+        velocity = np.radians(10)
+
+        print(reversal_locations[0])
+
+        super().__init__(reversal_locations[0],inter_reversal_distances,
+            reversal_locations[0],1,1,velocity=velocity,n_points=9000,num_transit_ticks=40)
+        self.velocity = velocity

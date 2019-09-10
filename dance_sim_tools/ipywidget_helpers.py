@@ -3,7 +3,7 @@
 import ipywidgets as widgets
 
 
-def slider(start,stop,step,init):#,init):
+def slider(name,start,stop,step,init,readout_format='.0f'):#,init):
     return widgets.FloatSlider(
     value=init,
     min=start,
@@ -13,5 +13,6 @@ def slider(start,stop,step,init):#,init):
     continuous_update=False,
     orientation='horizontal',
     readout=True,
-    readout_format='.2f',
+    readout_format=readout_format,
+    description=name
 )
